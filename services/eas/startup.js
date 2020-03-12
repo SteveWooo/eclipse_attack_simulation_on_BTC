@@ -3,6 +3,7 @@
  * Email  : SteveWoo23@gmail.com
  * Github : https://github.com/stevewooo
  */
+const fs = require('fs');
 
 async function sleep(time) {
     return new Promise(resolve=>{
@@ -34,12 +35,21 @@ async function init(swc, options){
     }
 
     /**
-     * 创建节点
+     * 创建节点，这里应该封装到nodeContainer里面进行
      */
-    var ipList = ['11.22.33.44', '22.33.44.55'];
+    var ipList = ['11.22.33.44', '11.22.5.4', '11.22.3.2', '11.22.3.4', '11.22.1.1', '11.22.1.2', '11.22.1.3', '11.22.1.4', '11.22.1.5'];
     for(var i=0;i<ipList.length;i++) {
-        global.swc.nodeContainer.normal[ipList[i]] = new swc.models.Node(swc, {
-            ip : ipList[i]
+        global.swc.nodeContainer.nodes.normal[ipList[i]] = new swc.models.Node(swc, {
+            ip : ipList[i],
+            type : 'normal'
+        });
+    }
+
+    var ipList = ['1.2.3.4'];
+    for(var i=0;i<ipList.length;i++) {
+        global.swc.nodeContainer.nodes.victim[ipList[i]] = new swc.models.Node(swc, {
+            ip : ipList[i],
+            type : 'victim'
         });
     }
 }
@@ -55,7 +65,13 @@ async function writeLog(swc, options) {
  * 实验正式流程入口，实验中的时间控制在这里
  */
 async function entryExam(swc, options) {
+    while(true) {
+        await global.swc.timer.update(swc, options);
+        await global.swc.nodeContainer.update(swc, options);
+        
 
+        await sleep(1000);
+    }
 }
 
 module.exports = async function(swc, options){
