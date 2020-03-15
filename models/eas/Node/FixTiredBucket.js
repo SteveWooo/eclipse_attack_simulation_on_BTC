@@ -14,54 +14,20 @@ module.exports = function(swc, options) {
     let that = this;
 
     // 篮子数量
-    this.BUCKET_COUNT = 256;
+    this.BUCKET_COUNT = 64;
     this.IP_PER_BUCKET = 64;
-    this.GROUP_COUNT = 32;
+    this.GROUP_COUNT = 4;
 
-    this.BUCKET_COUNT = 16;
+    this.BUCKET_COUNT = 8;
     this.IP_PER_BUCKET = 8;
     this.GROUP_COUNT = 2;
     this.buckets = [];
 
-    /**
+     /**
      * 初始化bucket
      */
     for(let i=0;i<that.BUCKET_COUNT;i++) {
         that.buckets[i] = [];
-    }
-
-    /**
-     * 如果要插入的篮子满了，就要调用这两个个函数来删除一些东西
-     * 先删除离谱的节点，再删除最老节点，shinkNew必须删除至少一个节点
-     * @param options.bucketPos
-     */
-    async function shinkTerrible(_swc, _options) {
-
-    }
-    async function shinkNew(_swc, _options) {
-        // 随机选择4个出来
-        let bucketPos = _options.bucketPos;
-        let tempNum = [];
-        let choosenNum = [];
-        for(var i=0;i<that.buckets[bucketPos].length;i++) {
-            tempNum.push(i);
-        }
-        for(var i=0;i<4;i++) {
-            let index = Math.floor(Math.random() * tempNum.length);
-            choosenNum.push(tempNum[index]);
-        }
-
-        // 挑选出最久没更新的
-        let minUpdate = global.swc.timer.now;
-        let minIndex = 0;
-        for(var i=0;i<choosenNum.length;i++) {
-            if(that.buckets[bucketPos][choosenNum[i]].updateAt < minUpdate) {
-                minUpdate = that.buckets[bucketPos][choosenNum[i]].updateAt;
-                minIndex = i;
-            }
-        }
-        let shinkIndex = choosenNum[minIndex];
-        return that.buckets[bucketPos].splice(shinkIndex, 1)[0];
     }
 
     /**
@@ -93,6 +59,53 @@ module.exports = function(swc, options) {
     }
 
     /**
+     * 如果要插入的篮子满了，就要调用这两个个函数来删除一些东西
+     * 删除最老节点，ShinkTired必须删除至少一个节点
+     */
+    async function shinkTerrible(_swc, _options) {
+
+    }
+    async function ShinkTired(_swc, _options) {
+        // 随机选择4个出来
+        let bucketPos = _options.bucketPos;
+        let tempNum = [];
+        let choosenNum = [];
+        for(var i=0;i<that.buckets[bucketPos].length;i++) {
+            tempNum.push(i);
+        }
+        for(var i=0;i<4;i++) {
+            let index = Math.floor(Math.random() * tempNum.length);
+            choosenNum.push(tempNum[index]);
+        }
+
+        // 挑选出最久没更新的
+        let minConnect = global.swc.timer.now;
+        let minIndex = 0;
+        for(var i=0;i<choosenNum.length;i++) {
+            if(that.buckets[bucketPos][choosenNum[i]].lastConnected < minConnect) {
+                minConnect = that.buckets[bucketPos][choosenNum[i]].lastConnected;
+                minIndex = i;
+            }
+        }
+        let shinkIndex = choosenNum[minIndex];
+        return that.buckets[bucketPos].splice(shinkIndex, 1)[0];
+    }
+
+    /**
+     * 选择桶内位置（优化算法）
+     */
+    async function selectPosition(_swc, _options) {
+        let position = hash(_options.nodeInfo.ip);
+        let positionTmp = 0;
+        for(var i=0;i<position.length;i++){
+            positionTmp += position[i] % that.IP_PER_BUCKET;
+        }
+        position = positionTmp % that.IP_PER_BUCKET;
+
+        return position;
+    }
+
+    /**
      * 往大篮子添加IP的操作
      * @param options.nodeInfo.ip
      */
@@ -100,26 +113,41 @@ module.exports = function(swc, options) {
         let bucketPos = await selectBucket(_swc, {
             nodeInfo : _options.nodeInfo
         })
-        if(that.buckets[bucketPos].length >= that.IP_PER_BUCKET) {
-            await shinkTerrible(_swc, _options);
-        }
+        let position = await selectPosition(_swc, {
+            nodeInfo : _options.nodeInfo
+        })
+        // if(that.buckets[bucketPos].length >= that.IP_PER_BUCKET) {
+        //     await shinkTerrible(_swc, _options);
+        // }
 
-        if(that.buckets[bucketPos].length >= that.IP_PER_BUCKET) {
-            let node = await shinkNew(_swc, {
-                bucketPos : bucketPos
-            });
-            if(that.type == 'victim') {
-                console.log('shink:');
-                console.log(node)
+        // 不需要移除，直接占掉原来的位置
+        // if(that.buckets[bucketPos].length >= that.IP_PER_BUCKET) {
+        //     let node = await shinkNew(_swc, {
+        //         bucketPos : bucketPos
+        //     });
+        //     if(that.type == 'victim') {
+        //         console.log('shink:');
+        //         console.log(node)
+        //     }
+        // }
+
+        // 被直接删除即可
+        let originNode = null;
+        if(that.buckets[bucketPos][position] != undefined) {
+            // 注意要深拷贝
+            originNode = {};
+            for(var i in that.buckets[bucketPos][position]) {
+                originNode[i] = that.buckets[bucketPos][position][i];
             }
         }
 
         // 标注时间戳
         _options.nodeInfo.createAt = global.swc.timer.now;
         _options.nodeInfo.updateAt = global.swc.timer.now;
-        that.buckets[bucketPos].push(_options.nodeInfo);
+        // that.buckets[bucketPos].push(_options.nodeInfo);
+        that.buckets[bucketPos][position] = _options.nodeInfo;
 
-        return ;
+        return originNode;
     }
 
     /**
@@ -128,10 +156,14 @@ module.exports = function(swc, options) {
      */
     this.select = async function(_swc, _options){
         let connections = _options.connections;
+
         // 先随机选择吧
         let tempNodes = []; // 有东西的bucket
         for(var i=0;i<that.buckets.length;i++) {
             for(var k=0;k<that.buckets[i].length;k++) {
+                if(that.buckets[i][k] == undefined) {
+                    continue;
+                }
                 // 不要重复连接
                 let flag = false;
                 for(var out = 0;out<connections.outBound.length;out++) {
@@ -153,7 +185,7 @@ module.exports = function(swc, options) {
                 tempNodes.push(that.buckets[i][k]);
             }
         }
-        
+
         if(tempNodes.length == 0) {
             return null;
         }
@@ -163,7 +195,7 @@ module.exports = function(swc, options) {
     }
 
     /**
-     * 检查这个node在不在newBucket，一般要配合tiredBucket的check一起用
+     * 检查这个node在不在Bucket
      * @param options.nodeInfo
      */
     this.checkNodeExist = async function(_swc, _options){
@@ -171,6 +203,9 @@ module.exports = function(swc, options) {
         let flag = false;
         for(var i=0;i<that.buckets.length;i++) {
             for(var k=0;k<that.buckets[i].length;k++) {
+                if(that.buckets[i][k] == undefined) {
+                    continue;
+                }
                 if(nodeInfo.ip == that.buckets[i][k].ip) {
                     flag = true;
                     return flag;
@@ -190,7 +225,13 @@ module.exports = function(swc, options) {
         let flag = false;
         for(var i=0;i<that.buckets.length;i++) {
             for(var k=0;k<that.buckets[i].length;k++) {
+                if(that.buckets[i][k] == undefined) {
+                    continue;
+                }
                 if(nodeInfo.ip == that.buckets[i][k].ip) {
+                    if(_options.updateConnect) {
+                        that.buckets[i][k].lastConnected = now;
+                    }
                     that.buckets[i][k].updateAt = now;
                     return flag;
                 }
@@ -198,25 +239,6 @@ module.exports = function(swc, options) {
         }
 
         return flag;
-    }
-
-    /**
-     * 从桶中删除节点
-     * @param options.nodeInfo.ip 
-     */
-    this.deleteNode = async function(_swc, _options) {
-        var nodeInfo = _options.nodeInfo;
-        for(var i=0;i<that.buckets.length;i++) {
-            for(var k=0;k<that.buckets[i].length;k++) {
-                if(nodeInfo.ip == that.buckets[i][k].ip) {
-                    that.buckets[i].splice(k, 1);
-                    i--;
-                    return true;
-                }
-            }
-        }
-        
-        return false;
     }
 
     /**

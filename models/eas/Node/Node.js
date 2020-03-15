@@ -19,8 +19,14 @@ module.exports = function(swc, options) {
     /**
      * 创建两个篮子
      */
-    this.newBucket = new swc.models['Node/NewBucket'](swc, {});
-    this.tiredBucket = new swc.models['Node/TiredBucket'](swc, {});
+    // this.newBucket = new swc.models['Node/NewBucket'](swc, {});
+    // this.tiredBucket = new swc.models['Node/TiredBucket'](swc, {});
+    
+    /**
+     * 优化算法
+     */
+    this.newBucket = new swc.models['Node/FixNewBucket'](swc, {});
+    this.tiredBucket = new swc.models['Node/FixTiredBucket'](swc, {});
 
     /**
      * 连接池
@@ -68,10 +74,11 @@ module.exports = function(swc, options) {
             }
         })
 
-        // 连接成功，加入tired桶里
         if(connResult == false) {
             return ;
         }
+        // 连接成功，加入tired桶里
+        that.connections.outBound.push(nodeInfo);
 
         // 如果节点在new桶 删除
         if(await that.newBucket.checkNodeExist(_swc, {
@@ -140,6 +147,31 @@ module.exports = function(swc, options) {
         }
         var nodeInfo = _options.nodeInfo;
 
+        // 检查一下是不是已经连接过了
+        let flag = false;
+        for(var i=0;i<that.connections.outBound.length;i++) {
+            if(that.connections.outBound[i].ip == nodeInfo.ip) {
+                flag = true;
+                break
+            }
+        }
+        for(var i=0;i<that.connections.inBound.length;i++) {
+            if(that.connections.inBound[i].ip == nodeInfo.ip) {
+                flag = true;
+                break
+            }
+        }
+        // 已经连接过了不需要连接了
+        if(flag == true) {
+            // swc.log.error(`${that.ip} -- reject conn to ${nodeInfo.ip}`);
+            let node = await global.swc.nodeContainer.getNode(_swc, {
+                nodeInfo : nodeInfo
+            })
+            // console.log(global.swc.nodeContainer.nodes[node.type][node.ip].connections);
+            return false;
+        }
+        that.connections.inBound.push(nodeInfo);
+
         /**
          * 连接成功的话，就把这个节点从new桶删除，加入tired桶
          */
@@ -165,7 +197,7 @@ module.exports = function(swc, options) {
         })) {
             await that.tiredBucket.updateNode(_swc, {
                 nodeInfo : {
-                    ip : nodeData.ip
+                    ip : nodeInfo.ip
                 }
             })
             return ;
@@ -200,13 +232,6 @@ module.exports = function(swc, options) {
         })
 
         return true;
-    }
-
-    /**
-     * 节点初始化调用，受害节点初始化的时候要跟大量normal节点进行addr通信
-     */
-    this.init = async function(_swc, _options) {
-
     }
 
     /**
@@ -249,9 +274,10 @@ module.exports = function(swc, options) {
     async function sendAddr_normalNode(_swc, _options) {
         let status = global.swc.timer.status;
         /**
-         * victim的初始化阶段，尽可能和别的normal node建立联系
+         * victim的初始化阶段，尽可能和别的normal node建立联系，也就是组网过程
          */
-        if(status == 'init' && (that.type == 'victim' || that.type == 'normal')) {
+        if(that.type == 'victim' || that.type == 'normal') {
+            var count = 0;
             for(var i in global.swc.nodeContainer.nodes.normal) {
                 if(global.swc.nodeContainer.nodes.normal[i].ip == that.ip) {
                     continue;
@@ -261,7 +287,17 @@ module.exports = function(swc, options) {
                         ip : that.ip
                     }
                 })
+
+                /**
+                 * 只连接几个节点就够了，不然慢成狗。重要是都得连接受害者节点
+                 */
+                count ++ ;
+                if(count >= 40) {
+                    break 
+                }
             }
+
+            // new bucket尽量填满
             for(var i in global.swc.nodeContainer.nodes.victim) {
                 if(global.swc.nodeContainer.nodes.victim[i].ip == that.ip) {
                     continue;
@@ -280,7 +316,56 @@ module.exports = function(swc, options) {
      */
     async function connectOther_normalNode(_swc, _options) {
         let status = global.swc.timer.status;
+        if(status == 'init') {
+            // 尽可能连接被害者节点
+            if(that.type == 'normal') {
+                for(var i in global.swc.nodeContainer.nodes['victim']) {
+                    var result = await global.swc.nodeContainer.nodes['victim'][i].connect(_swc, {
+                        nodeInfo : {
+                            ip : that.ip
+                        }
+                    })
+                }
+            }
+        }
+
         await tryOutBoundConnect(_swc, {});
+        
+    }
+
+    /**
+     * 恶意节点行为：
+     * 1、不断发送addr_msg给受害节点
+     * 2、不断尝试与受害节点进行连接
+     */
+    async function attackerAction(_swc, _options) {
+        for(var i in global.swc.nodeContainer.nodes['victim']) {
+            global.swc.nodeContainer.nodes['victim'][i].msg_addr(_swc, {
+                nodeInfo : {
+                    ip : that.ip
+                }
+            })
+
+            global.swc.nodeContainer.nodes['victim'][i].connect(_swc, {
+                nodeInfo : {
+                    ip : that.ip
+                }
+            })
+        }
+    }
+
+    /**
+     * 随机掉线算法，需要制造一些随机掉线节点，来腾出位置给攻击节点玩
+     */
+    async function randomOffline(_swc, _options) {
+        // 50%掉in和out
+        if(Math.round(Math.random()) == 1) {
+            let index = Math.floor(Math.random() * that.connections.outBound.length);
+            that.connections.outBound.splice(index, 1);
+        } else {
+            let index = Math.floor(Math.random() * that.connections.inBound.length);
+            that.connections.inBound.splice(index, 1);
+        }
     }
 
     /**
@@ -289,19 +374,25 @@ module.exports = function(swc, options) {
     this.update = async function(_swc, _options){
         var now = global.swc.timer.now;
         let status = global.swc.timer.status;
-        // 每5秒发送一次addr
+
+        if(status == 'attack' && that.type == 'attacker') {
+            if(now % 5000 == 0) {
+                await attackerAction(_swc, _options);
+            }
+        }
+        // 定期发送一次addr
         if(that.type == 'normal' || that.type == 'victim'){
-            if(now % 1000 == 0) {
+            if(now % 10000 == 0) {
                 await sendAddr_normalNode(_swc, _options);
                 await connectOther_normalNode(_swc, {});
             }
-        }
-        if(that.type == 'victim') {
-            console.log(`ip : ${that.ip} -> newBucket`);
-            console.log(that.newBucket.buckets);
-            console.log(`ip : ${that.ip} -> tiredBucket`);
-            console.log(that.tiredBucket.buckets);
-            console.log('\n')
+
+            /**
+             * 定期掉线
+             */
+            if(now % (11 * 1000) == 0) {
+                await randomOffline(_swc, {});
+            }
         }
     }
 

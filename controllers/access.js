@@ -30,6 +30,21 @@ module.exports = async (swc, options)=>{
 		path : `${__dirname}/../models/eas/Node/TiredBucket`
 	})	
 
+	swc = await swc.registerModel(swc, {
+		modelName : 'Node/FixNewBucket',
+		path : `${__dirname}/../models/eas/Node/FixNewBucket`
+	})
+	swc = await swc.registerModel(swc, {
+		modelName : 'Node/FixTiredBucket',
+		path : `${__dirname}/../models/eas/Node/FixTiredBucket`
+	})	
+
+	// 记录全局常量为主
+	global.config = {
+		mainLogVersion : +new Date(),
+		examTime : 1
+	}
+
 	/**
 	 * 流程入口
 	 */

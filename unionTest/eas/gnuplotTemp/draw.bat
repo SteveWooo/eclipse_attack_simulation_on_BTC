@@ -1,0 +1,1 @@
+gnuplot %~dp0/draw.plt

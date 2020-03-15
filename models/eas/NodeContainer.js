@@ -14,18 +14,31 @@ module.exports = function(swc, options) {
      */
     this.nodes = {
         victim : {},
+        attacker : {},
         normal : {},
-        attacker : {}
+        
     }
 
     /**
      * 更新调用入口
      */
     this.update = async function(_swc, _options) {
+        let tempNode = [];
         for(var type in that.nodes) {
             for(var node in that.nodes[type]) {
-                await that.nodes[type][node].update(_swc, {});
+                tempNode.push({
+                    type : type,
+                    ip : node
+                })
+                // await that.nodes[type][node].update(_swc, {});
             }
+        }
+
+        while(tempNode.length != 0) {
+            let nodeIndex = Math.floor(Math.random() * tempNode.length);
+            let node = tempNode.splice(nodeIndex, 1)[0];
+            // console.log(node)
+            await that.nodes[node.type][node.ip].update(swc, {});
         }
     }
 
